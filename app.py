@@ -1,14 +1,22 @@
-# Update the Streamlit app with detailed calculations section
+# Create streamlined Streamlit app with PDF, PowerPoint, single powerful chart, and worst case
 streamlit_app_content = '''import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 from plotly.subplots import make_subplots
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional
-import json
+import io
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib import colors
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.enum.text import PP_ALIGN
+from pptx.dml.color import RGBColor
 
 # Page config
 st.set_page_config(
@@ -106,6 +114,130 @@ class SalesROICalculator:
         
         return self.results
 
+def create_story_chart(calculator):
+    """Erstelle den einen Chart, der die ganze Story erzählt"""
+    if not calculator.results:
+        return None
+    
+    r = calculator.results
+    
+    # Create the story chart - ROI development over 12 months
+    fig = go.Figure()
+    
+    # Monthly cumulative profit
+    months = list(range(13))
+    cumulative = [-r.total_investment]  # Start with negative investment
+    monthly_labels = ['Start'] + [f'Monat {i}' for i in range(1, 13)]
+    
+    for month in range(1, 13):
+        cumulative.append(cumulative[-1] + r.monthly_margin)
+    
+    # Add the main line
+    fig.add_trace(go.Scatter(
+        x=months, 
+        y=cumulative,
+        mode='lines+markers',
+        name='Kumulierter Gewinn',
+        line=dict(color='#2E86AB', width=4),
+        marker=dict(size=8, color='#2E86AB'),
+        hovertemplate='<b>%{text}</b><br>Kumulierter Gewinn: %{y:,.0f} €<extra></extra>',
+        text=monthly_labels
+    ))
+    
+    # Add break-even line
+    fig.add_hline(y=0, line_dash="dash", line_color="#E74C3C", line_width=2,
+                  annotation_text="Break-Even", annotation_position="bottom right")
+    
+    # Add investment area (negative)
+    fig.add_shape(
+        type="rect",
+        x0=0, x1=12,
+        y0=-r.total_investment, y1=0,
+        fillcolor="rgba(231, 76, 60, 0.1)",
+        line=dict(width=0),
+    )
+    
+    # Add profit area (positive)
+    max_profit = max(cumulative)
+    fig.add_shape(
+        type="rect",
+        x0=0, x1=12,
+        y0=0, y1=max_profit,
+        fillcolor="rgba(46, 134, 171, 0.1)",
+        line=dict(width=0),
+    )
+    
+    # Add key annotations
+    payback_month = r.payback_days / 30
+    if payback_month <= 12:
+        fig.add_annotation(
+            x=payback_month,
+            y=0,
+            text=f"Break-Even<br>Tag {r.payback_days}",
+            showarrow=True,
+            arrowhead=2,
+            arrowcolor="#E74C3C",
+            bgcolor="white",
+            bordercolor="#E74C3C",
+            borderwidth=2
+        )
+    
+    # Final profit annotation
+    fig.add_annotation(
+        x=12,
+        y=cumulative[-1],
+        text=f"Jahresgewinn<br>{calculator.format_currency(r.annual_margin)}",
+        showarrow=True,
+        arrowhead=2,
+        arrowcolor="#2E86AB",
+        bgcolor="white",
+        bordercolor="#2E86AB",
+        borderwidth=2
+    )
+    
+    # Investment annotation
+    fig.add_annotation(
+        x=0,
+        y=-r.total_investment,
+        text=f"Investment<br>{calculator.format_currency(r.total_investment)}",
+        showarrow=True,
+        arrowhead=2,
+        arrowcolor="#E74C3C",
+        bgcolor="white",
+        bordercolor="#E74C3C",
+        borderwidth=2
+    )
+    
+    fig.update_layout(
+        title={
+            'text': f"<b>Sales-Training ROI Story: {r.roi_percentage:.0f}% ROI in 12 Monaten</b>",
+            'x': 0.5,
+            'font': {'size': 20}
+        },
+        xaxis_title="Monate nach Training-Start",
+        yaxis_title="Kumulierter Gewinn (€)",
+        height=500,
+        showlegend=False,
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        font=dict(size=12),
+        margin=dict(l=80, r=80, t=80, b=80)
+    )
+    
+    # Format y-axis
+    fig.update_yaxis(
+        tickformat=",.0f",
+        gridcolor='lightgray',
+        gridwidth=1
+    )
+    
+    fig.update_xaxis(
+        gridcolor='lightgray',
+        gridwidth=1
+    )
+    
+    return fig
+
 def create_calculation_breakdown(calculator):
     """Erstelle detaillierte Kalkulationsübersicht"""
     if not calculator.results or not calculator.parameters:
@@ -117,206 +249,271 @@ def create_calculation_breakdown(calculator):
     # Create calculation dataframe
     calc_data = []
     
-    # 1. Investment Breakdown
+    # Investment
     calc_data.append({
         'Kategorie': '💸 INVESTMENT',
         'Berechnung': '',
-        'Formel': '',
         'Ergebnis': ''
     })
     
     calc_data.append({
         'Kategorie': 'Trainingskosten',
-        'Berechnung': f'{params.participants} Teilnehmer × {calculator.format_currency(params.cost_per_person)}',
-        'Formel': f'{params.participants} × {params.cost_per_person:,.0f}',
+        'Berechnung': f'{params.participants} × {calculator.format_currency(params.cost_per_person)}',
         'Ergebnis': calculator.format_currency(results.training_costs)
     })
     
     calc_data.append({
         'Kategorie': 'Ausfallkosten',
-        'Berechnung': f'{params.participants} Teilnehmer × {params.training_days} Tage × {params.daily_rate}€',
-        'Formel': f'{params.participants} × {params.training_days} × {params.daily_rate}',
+        'Berechnung': f'{params.participants} × {params.training_days} × {params.daily_rate}€',
         'Ergebnis': calculator.format_currency(results.opportunity_costs)
     })
     
     calc_data.append({
         'Kategorie': '🔸 Gesamtinvestition',
         'Berechnung': f'{calculator.format_currency(results.training_costs)} + {calculator.format_currency(results.opportunity_costs)}',
-        'Formel': f'{results.training_costs:,.0f} + {results.opportunity_costs:,.0f}',
         'Ergebnis': calculator.format_currency(results.total_investment)
     })
     
-    # 2. Deal Analysis
+    # Deal Analysis
     calc_data.append({
         'Kategorie': '📈 DEAL-ANALYSE',
         'Berechnung': '',
-        'Formel': '',
         'Ergebnis': ''
     })
     
     calc_data.append({
-        'Kategorie': 'Aktuelle Deals/Monat',
-        'Berechnung': f'{params.monthly_leads} Leads × {params.current_close_rate}%',
-        'Formel': f'{params.monthly_leads} × {params.current_close_rate/100}',
-        'Ergebnis': f'{calculator.format_number(results.current_deals)} Deals'
-    })
-    
-    calc_data.append({
-        'Kategorie': 'Ziel Deals/Monat',
-        'Berechnung': f'{params.monthly_leads} Leads × {params.target_close_rate}%',
-        'Formel': f'{params.monthly_leads} × {params.target_close_rate/100}',
-        'Ergebnis': f'{calculator.format_number(results.target_deals)} Deals'
-    })
-    
-    calc_data.append({
-        'Kategorie': '🔸 Zusätzliche Deals',
-        'Berechnung': f'{calculator.format_number(results.target_deals)} - {calculator.format_number(results.current_deals)}',
-        'Formel': f'{results.target_deals:.1f} - {results.current_deals:.1f}',
+        'Kategorie': 'Zusätzliche Deals/Monat',
+        'Berechnung': f'{params.monthly_leads} × ({params.target_close_rate}% - {params.current_close_rate}%)',
         'Ergebnis': f'{calculator.format_number(results.additional_deals)} Deals'
-    })
-    
-    # 3. Revenue & Margin
-    calc_data.append({
-        'Kategorie': '💰 UMSATZ & MARGE',
-        'Berechnung': '',
-        'Formel': '',
-        'Ergebnis': ''
-    })
-    
-    calc_data.append({
-        'Kategorie': 'Mehrumsatz/Monat',
-        'Berechnung': f'{calculator.format_number(results.additional_deals)} Deals × {calculator.format_currency(params.deal_value)}',
-        'Formel': f'{results.additional_deals:.1f} × {params.deal_value:,.0f}',
-        'Ergebnis': calculator.format_currency(results.monthly_revenue)
     })
     
     calc_data.append({
         'Kategorie': 'Zusatzgewinn/Monat',
-        'Berechnung': f'{calculator.format_currency(results.monthly_revenue)} × {params.margin_rate}%',
-        'Formel': f'{results.monthly_revenue:,.0f} × {params.margin_rate/100}',
+        'Berechnung': f'{calculator.format_number(results.additional_deals)} × {calculator.format_currency(params.deal_value)} × {params.margin_rate}%',
         'Ergebnis': calculator.format_currency(results.monthly_margin)
     })
     
     calc_data.append({
         'Kategorie': '🔸 Zusatzgewinn/Jahr',
-        'Berechnung': f'{calculator.format_currency(results.monthly_margin)} × 12 Monate',
-        'Formel': f'{results.monthly_margin:,.0f} × 12',
+        'Berechnung': f'{calculator.format_currency(results.monthly_margin)} × 12',
         'Ergebnis': calculator.format_currency(results.annual_margin)
     })
     
-    # 4. ROI Calculation
+    # ROI
     calc_data.append({
         'Kategorie': '🚀 ROI-BERECHNUNG',
         'Berechnung': '',
-        'Formel': '',
         'Ergebnis': ''
     })
     
     calc_data.append({
-        'Kategorie': 'Nettogewinn',
-        'Berechnung': f'{calculator.format_currency(results.annual_margin)} - {calculator.format_currency(results.total_investment)}',
-        'Formel': f'{results.annual_margin:,.0f} - {results.total_investment:,.0f}',
-        'Ergebnis': calculator.format_currency(results.net_benefit)
-    })
-    
-    calc_data.append({
         'Kategorie': 'ROI %',
-        'Berechnung': f'({calculator.format_currency(results.net_benefit)} ÷ {calculator.format_currency(results.total_investment)}) × 100',
-        'Formel': f'({results.net_benefit:,.0f} ÷ {results.total_investment:,.0f}) × 100',
+        'Berechnung': f'({calculator.format_currency(results.annual_margin)} - {calculator.format_currency(results.total_investment)}) ÷ {calculator.format_currency(results.total_investment)} × 100',
         'Ergebnis': f'{results.roi_percentage:.0f}%'
     })
     
     calc_data.append({
         'Kategorie': '🔸 Payback-Zeit',
-        'Berechnung': f'({calculator.format_currency(results.total_investment)} ÷ {calculator.format_currency(results.monthly_margin)}) × 30 Tage',
-        'Formel': f'({results.total_investment:,.0f} ÷ {results.monthly_margin:,.0f}) × 30',
+        'Berechnung': f'{calculator.format_currency(results.total_investment)} ÷ {calculator.format_currency(results.monthly_margin)} × 30',
         'Ergebnis': f'{results.payback_days} Tage'
     })
     
     return pd.DataFrame(calc_data)
 
-def create_roi_charts(calculator):
-    """Erstelle interaktive Plotly Charts"""
+def create_pdf_report(calculator):
+    """Erstelle PDF-Report"""
     if not calculator.results:
         return None
     
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    # Title
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        spaceAfter=30,
+        textColor=colors.HexColor('#2E86AB'),
+        alignment=1  # Center
+    )
+    
+    story.append(Paragraph("🎯 Sales-Training ROI Analyse", title_style))
+    story.append(Paragraph("Joey's Business Case für CFO & CEO", styles['Heading2']))
+    story.append(Spacer(1, 20))
+    
+    # Executive Summary
+    story.append(Paragraph("📊 EXECUTIVE SUMMARY", styles['Heading2']))
+    
     r = calculator.results
+    p = calculator.parameters
     
-    # Create subplots
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=('Investment vs. Jahresgewinn', 'Monatliche Gewinnentwicklung', 
-                       'ROI-Sensitivität', 'Vorher vs. Nachher'),
-        specs=[[{"type": "bar"}, {"type": "scatter"}],
-               [{"type": "scatter"}, {"type": "bar"}]]
-    )
+    summary_data = [
+        ['Metrik', 'Wert', 'Bedeutung'],
+        ['Gesamtinvestition', calculator.format_currency(r.total_investment), 'Einmalige Kosten'],
+        ['Zusatzgewinn/Monat', calculator.format_currency(r.monthly_margin), 'Dauerhafter Gewinn'],
+        ['Jahresgewinn', calculator.format_currency(r.annual_margin), 'Erster Jahresertrag'],
+        ['ROI', f'{r.roi_percentage:.0f}%', 'Return on Investment'],
+        ['Payback-Zeit', f'{r.payback_days} Tage', 'Amortisationsdauer'],
+        ['ROI-Multiple', f'{r.roi_multiple + 1:.1f}x', 'Gewinnfaktor']
+    ]
     
-    # 1. Investment vs Jahresgewinn
-    fig.add_trace(
-        go.Bar(x=['Investment', 'Jahresgewinn'], 
-               y=[r.total_investment, r.annual_margin],
-               marker_color=['#e74c3c', '#27ae60'],
-               name='Investment vs Gewinn',
-               text=[f'{r.total_investment:,.0f} €', f'{r.annual_margin:,.0f} €'],
-               textposition='auto'),
-        row=1, col=1
-    )
+    summary_table = Table(summary_data)
+    summary_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E86AB')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+    ]))
     
-    # 2. Monatliche Entwicklung
-    months = list(range(13))
-    cumulative = [-r.total_investment]
-    for month in range(1, 13):
-        cumulative.append(cumulative[-1] + r.monthly_margin)
+    story.append(summary_table)
+    story.append(Spacer(1, 20))
     
-    fig.add_trace(
-        go.Scatter(x=months, y=cumulative,
-                  mode='lines+markers',
-                  name='Kumulierter Gewinn',
-                  line=dict(color='#3498db', width=3)),
-        row=1, col=2
-    )
+    # Recommendation
+    story.append(Paragraph("🎯 EMPFEHLUNG", styles['Heading2']))
     
-    # Break-even line
-    fig.add_hline(y=0, line_dash="dash", line_color="red", 
-                  annotation_text="Break-even", row=1, col=2)
+    if r.roi_percentage > 100:
+        recommendation = f"""
+        <b>KLARE EMPFEHLUNG: TRAINING SOFORT DURCHFÜHREN!</b><br/><br/>
+        ✅ ROI von {r.roi_percentage:.0f}% ist außergewöhnlich hoch<br/>
+        ✅ Payback in nur {r.payback_days} Tagen<br/>
+        ✅ {calculator.format_currency(r.monthly_margin)} zusätzlicher Gewinn pro Monat<br/>
+        ✅ Perfekte Argumentationsbasis für das Management<br/><br/>
+        <b>Fazit:</b> Jeder investierte Euro bringt {r.roi_multiple + 1:.1f}€ zurück!
+        """
+    else:
+        recommendation = f"ROI von {r.roi_percentage:.0f}% rechtfertigt die Investition."
     
-    # 3. ROI Sensitivität
-    close_rates = list(range(int(calculator.parameters.target_close_rate)-5, 
-                            int(calculator.parameters.target_close_rate)+10, 2))
-    roi_values = []
+    story.append(Paragraph(recommendation, styles['Normal']))
+    story.append(Spacer(1, 20))
     
-    for rate in close_rates:
-        temp_deals = calculator.parameters.monthly_leads * (rate/100) - r.current_deals
-        temp_revenue = temp_deals * calculator.parameters.deal_value
-        temp_margin = temp_revenue * (calculator.parameters.margin_rate/100) * 12
-        temp_roi = ((temp_margin - r.total_investment) / r.total_investment) * 100
-        roi_values.append(temp_roi)
+    # Calculation Details
+    story.append(Paragraph("🔢 KALKULATIONS-DETAILS", styles['Heading2']))
     
-    fig.add_trace(
-        go.Scatter(x=close_rates, y=roi_values,
-                  mode='lines+markers',
-                  name='ROI Sensitivität',
-                  line=dict(color='#e67e22', width=3)),
-        row=2, col=1
-    )
+    calc_df = create_calculation_breakdown(calculator)
+    if calc_df is not None:
+        calc_data = [['Kategorie', 'Berechnung', 'Ergebnis']]
+        for _, row in calc_df.iterrows():
+            if row['Kategorie'] and not any(x in row['Kategorie'] for x in ['💸', '📈', '🚀']):
+                calc_data.append([row['Kategorie'], row['Berechnung'], row['Ergebnis']])
+        
+        calc_table = Table(calc_data)
+        calc_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E86AB')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        
+        story.append(calc_table)
     
-    # 4. Vorher vs Nachher
-    scenarios = ['Aktuell', 'Nach Training']
-    deals = [r.current_deals, r.target_deals]
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+def create_powerpoint_deck(calculator):
+    """Erstelle PowerPoint-Präsentation"""
+    if not calculator.results:
+        return None
     
-    fig.add_trace(
-        go.Bar(x=scenarios, y=deals,
-               marker_color=['#95a5a6', '#3498db'],
-               name='Deals/Monat',
-               text=[f'{d:.1f}' for d in deals],
-               textposition='auto'),
-        row=2, col=2
-    )
+    prs = Presentation()
     
-    fig.update_layout(height=800, showlegend=False, 
-                     title_text="Sales-Training ROI Analyse - Interaktive Dashboards")
+    # Slide 1: Title
+    slide_layout = prs.slide_layouts[0]  # Title slide
+    slide = prs.slides.add_slide(slide_layout)
+    title = slide.shapes.title
+    subtitle = slide.placeholders[1]
     
-    return fig
+    title.text = "🎯 Sales-Training ROI Analyse"
+    subtitle.text = "Joey's Business Case für CFO & CEO\\nROI: {:.0f}% | Payback: {} Tage".format(
+        calculator.results.roi_percentage, calculator.results.payback_days)
+    
+    # Slide 2: Executive Summary
+    slide_layout = prs.slide_layouts[1]  # Title and content
+    slide = prs.slides.add_slide(slide_layout)
+    title = slide.shapes.title
+    content = slide.placeholders[1]
+    
+    title.text = "📊 Executive Summary"
+    
+    r = calculator.results
+    summary_text = f"""Investment: {calculator.format_currency(r.total_investment)}
+    
+Zusatzgewinn pro Monat: {calculator.format_currency(r.monthly_margin)}
+
+Jahresgewinn: {calculator.format_currency(r.annual_margin)}
+
+ROI: {r.roi_percentage:.0f}%
+
+Payback-Zeit: {r.payback_days} Tage
+
+ROI-Multiple: {r.roi_multiple + 1:.1f}x"""
+    
+    content.text = summary_text
+    
+    # Slide 3: Recommendation
+    slide_layout = prs.slide_layouts[1]
+    slide = prs.slides.add_slide(slide_layout)
+    title = slide.shapes.title
+    content = slide.placeholders[1]
+    
+    title.text = "🎯 Empfehlung"
+    
+    if r.roi_percentage > 100:
+        recommendation_text = f"""KLARE EMPFEHLUNG: TRAINING DURCHFÜHREN!
+
+✅ ROI von {r.roi_percentage:.0f}% ist außergewöhnlich
+✅ Payback in nur {r.payback_days} Tagen  
+✅ {calculator.format_currency(r.monthly_margin)} Gewinn pro Monat
+✅ Perfekte Argumentationsbasis
+
+Fazit: Jeder Euro bringt {r.roi_multiple + 1:.1f}€ zurück!"""
+    else:
+        recommendation_text = f"ROI von {r.roi_percentage:.0f}% rechtfertigt die Investition."
+    
+    content.text = recommendation_text
+    
+    # Slide 4: Key Arguments
+    slide_layout = prs.slide_layouts[1]
+    slide = prs.slides.add_slide(slide_layout)
+    title = slide.shapes.title
+    content = slide.placeholders[1]
+    
+    title.text = "💼 Top-Argumente für Management"
+    
+    arguments_text = f"""1. GEWINN-FOKUS
+   {calculator.format_currency(r.annual_margin)} zusätzlicher Jahresgewinn
+
+2. SCHNELLE AMORTISATION  
+   Investment zahlt sich in {r.payback_days} Tagen zurück
+
+3. WETTBEWERBSVORTEIL
+   Konkurrent nimmt uns täglich Gewinn weg
+
+4. SKALIERUNG
+   Marge wirkt auf ALLE zukünftigen Sales
+
+5. RISIKO-MINIMIERUNG
+   Status Quo ist das größte Risiko"""
+    
+    content.text = arguments_text
+    
+    # Save to buffer
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    buffer.seek(0)
+    return buffer
 
 def main():
     """Hauptfunktion der Streamlit App"""
@@ -329,14 +526,14 @@ def main():
     with st.expander("📋 Das Szenario", expanded=True):
         st.markdown("""
         **Ausgangssituation:**
-        - Sales-Team stagniert bei 15% Abschlussquote
-        - Neue bewährte Methodik verspricht 25% Abschlussquote  
+        - Sales-Team stagniert bei niedriger Abschlussquote
+        - Neue bewährte Methodik verspricht deutliche Steigerung
         - Training übersteigt genehmigtes Trainingsbudget
         
         **Herausforderung:**
         - CFO und CEO müssen für Budgetfreigabe gewonnen werden
-        - ⏰ **ZEITDRUCK:** Training soll in Q2 starten (6 Wochen!)
-        - 🏆 **WETTBEWERB:** Konkurrent hat bereits 30% Steigerung erzielt
+        - ⏰ **ZEITDRUCK:** Training soll schnell starten
+        - 🏆 **WETTBEWERB:** Konkurrent hat bereits Vorsprung
         
         **Joey's Aufgabe:**
         - Wasserdichte ROI-Argumentation erstellen
@@ -441,23 +638,14 @@ def main():
         calc_df = create_calculation_breakdown(calculator)
         
         if calc_df is not None:
-            # Style the dataframe
-            def highlight_totals(row):
-                if '🔸' in str(row['Kategorie']) or any(x in str(row['Kategorie']) for x in ['💸', '📈', '💰', '🚀']):
-                    return ['background-color: #f0f2f6; font-weight: bold'] * len(row)
-                return [''] * len(row)
-            
             # Display calculation table
-            styled_df = calc_df.style.apply(highlight_totals, axis=1)
-            
-            # Show only relevant columns for mobile
             display_df = calc_df[['Kategorie', 'Berechnung', 'Ergebnis']].copy()
             
             st.dataframe(
                 display_df,
                 use_container_width=True,
                 hide_index=True,
-                height=600
+                height=400
             )
             
             # Quick summary box
@@ -472,17 +660,17 @@ def main():
             **💡 Fazit:** Jeder investierte Euro bringt {results.roi_multiple + 1:.1f}€ zurück!
             """)
     
-    # Charts
-    st.header("📊 Interaktive Analysen")
+    # The ONE Chart that tells the whole story
+    st.header("📊 Die ROI-Story in einem Chart")
     
-    chart = create_roi_charts(calculator)
-    if chart:
-        st.plotly_chart(chart, use_container_width=True)
+    story_chart = create_story_chart(calculator)
+    if story_chart:
+        st.plotly_chart(story_chart, use_container_width=True)
     
-    # Szenario-Analysen
+    # Scenario Analysis with Worst Case
     st.header("🔍 Szenario-Analysen")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["🚀 Best Case", "💼 CFO Argumente", "⚠️ Risiken", "💰 Marge-Fokus"])
+    tab1, tab2, tab3 = st.tabs(["🚀 Best Case", "⚠️ Worst Case", "💼 CFO Argumente"])
     
     with tab1:
         best_revenue = results.monthly_revenue * 1.3
@@ -505,6 +693,37 @@ def main():
         """)
     
     with tab2:
+        # Worst Case: Training wirkt nur zu 50%, Marge sinkt um 5%
+        worst_deals = results.additional_deals * 0.5
+        worst_revenue = worst_deals * params.deal_value
+        worst_margin_rate = max(5, params.margin_rate - 5)
+        worst_profit = worst_revenue * (worst_margin_rate / 100)
+        worst_annual = worst_profit * 12
+        worst_roi = ((worst_annual - results.total_investment) / results.total_investment) * 100
+        worst_payback = int((results.total_investment / worst_profit) * 30) if worst_profit > 0 else 999
+        
+        st.markdown(f"""
+        ### ⚠️ WORST CASE SZENARIO
+        **Annahmen:** 
+        - Training wirkt nur zu 50% wie erwartet
+        - Marge sinkt um 5% (auf {worst_margin_rate}%)
+        - Marktbedingungen verschlechtern sich
+        
+        📊 **Zahlen:**
+        - Zusätzliche Deals: **{calculator.format_number(worst_deals)}/Monat**
+        - Zusatzgewinn: **{calculator.format_currency(worst_profit)}/Monat**
+        - Jahresgewinn: **{calculator.format_currency(worst_annual)}**
+        - ROI: **{worst_roi:.0f}%**
+        - Payback: **{worst_payback} Tage**
+        
+        💡 **Joey's Argument:**
+        > "Selbst im Worst Case haben wir noch **{worst_roi:.0f}% ROI**! 
+        > Das Risiko ist minimal - Status Quo ist viel riskanter!"
+        
+        **🔥 Entscheidend:** Auch im schlechtesten Fall ist die Investition profitabel!
+        """)
+    
+    with tab3:
         st.markdown(f"""
         ### 💼 TOP-ARGUMENTE FÜR CFO & CEO
         
@@ -516,97 +735,18 @@ def main():
         > "Investment zahlt sich in **{results.payback_days} Tagen** zurück - 
         > schneller als jede Maschine oder Software"
         
-        **3️⃣ MARGE-HEBEL:**
-        > "Jeder zusätzliche Deal bringt **{calculator.format_currency(results.monthly_revenue/results.additional_deals * params.margin_rate/100)}** 
-        > Gewinn - dauerhaft!"
+        **3️⃣ RISIKO-MINIMIERUNG:**
+        > "Selbst im Worst Case: **{((worst_annual - results.total_investment) / results.total_investment) * 100:.0f}% ROI**. 
+        > Status Quo ist das größte Risiko!"
         
         **4️⃣ WETTBEWERBSDRUCK:**
         > "Konkurrent nimmt uns täglich **{calculator.format_currency(results.monthly_margin/30)}** 
         > Gewinn weg - jeden Monat den wir warten!"
         
         **5️⃣ SKALIERUNG:**
-        > "Diese **{params.margin_rate}%** Marge wirkt auf ALLE zukünftigen 
-        > Sales - nicht nur auf das Training!"
+        > "Diese Marge wirkt auf ALLE zukünftigen Sales - 
+        > nicht nur auf das Training!"
         """)
-    
-    with tab3:
-        st.markdown(f"""
-        ### ⚠️ RISIKO-ANALYSE
-        
-        **🎯 Hauptrisiken:**
-        - **Training wirkt nicht:** Selbst bei 50% Wirkung: **{calculator.format_currency(results.annual_margin * 0.5)}** Jahresgewinn
-        - **Marge sinkt:** Auch bei nur **{params.margin_rate-5}%** Marge: **{calculator.format_currency(results.monthly_revenue * (params.margin_rate-5)/100 * 12)}** Jahresgewinn
-        - **Markt verschlechtert sich:** Training hilft gerade dann!
-        
-        **❗ GRÖßTES RISIKO: Status Quo!**
-        Entgangener Jahresgewinn: **{calculator.format_currency(results.annual_margin)}**
-        
-        **💡 Joey's Fazit:**
-        > "Jeder Tag Verzögerung kostet uns **{calculator.format_currency(results.monthly_margin/30)}** Gewinn!"
-        """)
-    
-    with tab4:
-        margin_impact = results.monthly_revenue * 0.05
-        st.markdown(f"""
-        ### 💰 MARGE-FOKUS: DER WAHRE HEBEL!
-        
-        **🎯 Warum Marge entscheidend ist:**
-        
-        **📊 Aktuelle Situation:**
-        {calculator.format_currency(results.monthly_revenue)} Mehrumsatz × {params.margin_rate}% 
-        = **{calculator.format_currency(results.monthly_margin)}** Gewinn
-        
-        **📈 Marge-Sensitivität:**
-        Nur 5% mehr Marge bedeutet **{calculator.format_currency(margin_impact)}** mehr Gewinn/Monat!
-        
-        **📅 Langzeit-Impact:**
-        {params.margin_rate}% Marge über 5 Jahre = **{calculator.format_currency(results.monthly_margin * 60)}** Zusatzgewinn
-        
-        **💼 CFO-Argument:**
-        > "Training verbessert nicht nur Abschlussquote, sondern auch 
-        > Verhandlungsskills → höhere Margen pro Deal!"
-        
-        **🎯 Bottom Line:**
-        {calculator.format_currency(results.total_investment)} investieren für {calculator.format_currency(results.annual_margin)} Jahresgewinn 
-        = **{(results.annual_margin/results.total_investment-1)*100:.0f}%** reine Gewinnsteigerung!
-        """)
-    
-    # Detaillierte Berechnungsübersicht (Expandable)
-    with st.expander("🔢 Vollständige Berechnungsdetails anzeigen"):
-        if calc_df is not None:
-            st.markdown("### 📋 Komplette Kalkulations-Tabelle")
-            st.dataframe(calc_df, use_container_width=True, hide_index=True)
-            
-            # Additional breakdown
-            st.markdown("### 🔍 Schritt-für-Schritt Erklärung")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown(f"""
-                **🏗️ INVESTMENT-AUFBAU:**
-                1. **Direkte Trainingskosten:** {params.participants} × {calculator.format_currency(params.cost_per_person)} = {calculator.format_currency(results.training_costs)}
-                2. **Ausfallkosten:** {params.participants} × {params.training_days} × {params.daily_rate}€ = {calculator.format_currency(results.opportunity_costs)}
-                3. **Gesamtinvestition:** {calculator.format_currency(results.training_costs)} + {calculator.format_currency(results.opportunity_costs)} = **{calculator.format_currency(results.total_investment)}**
-                
-                **📊 DEAL-STEIGERUNG:**
-                1. **Aktuell:** {params.monthly_leads} × {params.current_close_rate}% = {calculator.format_number(results.current_deals)} Deals
-                2. **Nach Training:** {params.monthly_leads} × {params.target_close_rate}% = {calculator.format_number(results.target_deals)} Deals
-                3. **Zusätzlich:** {calculator.format_number(results.target_deals)} - {calculator.format_number(results.current_deals)} = **{calculator.format_number(results.additional_deals)} Deals**
-                """)
-            
-            with col2:
-                st.markdown(f"""
-                **💰 GEWINN-BERECHNUNG:**
-                1. **Mehrumsatz:** {calculator.format_number(results.additional_deals)} × {calculator.format_currency(params.deal_value)} = {calculator.format_currency(results.monthly_revenue)}
-                2. **Monatsmarge:** {calculator.format_currency(results.monthly_revenue)} × {params.margin_rate}% = {calculator.format_currency(results.monthly_margin)}
-                3. **Jahresmarge:** {calculator.format_currency(results.monthly_margin)} × 12 = **{calculator.format_currency(results.annual_margin)}**
-                
-                **🚀 ROI-METRIKEN:**
-                1. **Nettogewinn:** {calculator.format_currency(results.annual_margin)} - {calculator.format_currency(results.total_investment)} = {calculator.format_currency(results.net_benefit)}
-                2. **ROI:** ({calculator.format_currency(results.net_benefit)} ÷ {calculator.format_currency(results.total_investment)}) × 100 = **{results.roi_percentage:.0f}%**
-                3. **Payback:** ({calculator.format_currency(results.total_investment)} ÷ {calculator.format_currency(results.monthly_margin)}) × 30 = **{results.payback_days} Tage**
-                """)
     
     # Export Funktionen
     st.header("📄 Export & Download")
@@ -614,38 +754,28 @@ def main():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        # JSON Export
-        export_data = {
-            "timestamp": datetime.now().isoformat(),
-            "scenario": "Joey's Sales-Training ROI Analyse",
-            "parameters": {
-                "participants": params.participants,
-                "cost_per_person": params.cost_per_person,
-                "monthly_leads": params.monthly_leads,
-                "current_close_rate": params.current_close_rate,
-                "target_close_rate": params.target_close_rate,
-                "deal_value": params.deal_value,
-                "margin_rate": params.margin_rate
-            },
-            "results": {
-                "total_investment": results.total_investment,
-                "monthly_revenue": results.monthly_revenue,
-                "monthly_margin": results.monthly_margin,
-                "annual_margin": results.annual_margin,
-                "roi_percentage": results.roi_percentage,
-                "payback_days": results.payback_days
-            },
-            "calculations": calc_df.to_dict('records') if calc_df is not None else []
-        }
-        
-        st.download_button(
-            label="📊 JSON Download",
-            data=json.dumps(export_data, indent=2, ensure_ascii=False),
-            file_name=f"roi_analyse_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
-            mime="application/json"
-        )
+        # PDF Export
+        pdf_buffer = create_pdf_report(calculator)
+        if pdf_buffer:
+            st.download_button(
+                label="📄 PDF Report",
+                data=pdf_buffer,
+                file_name=f"roi_analyse_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                mime="application/pdf"
+            )
     
     with col2:
+        # PowerPoint Export
+        ppt_buffer = create_powerpoint_deck(calculator)
+        if ppt_buffer:
+            st.download_button(
+                label="📊 PowerPoint Deck",
+                data=ppt_buffer,
+                file_name=f"roi_presentation_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            )
+    
+    with col3:
         # CSV Export
         if calc_df is not None:
             st.download_button(
@@ -654,48 +784,6 @@ def main():
                 file_name=f"roi_kalkulationen_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                 mime="text/csv"
             )
-    
-    with col3:
-        # PowerPoint Text Export
-        ppt_content = f"""# Sales-Training ROI Analyse
-
-## Das Szenario
-- Sales-Team stagniert bei {params.current_close_rate}% Abschlussquote
-- Neue Methodik verspricht {params.target_close_rate}%
-- Training kostet {calculator.format_currency(results.total_investment)}
-- CFO und CEO müssen überzeugt werden
-
-## Kern-Ergebnisse
-- Gesamtinvestition: {calculator.format_currency(results.total_investment)}
-- Mehrumsatz/Monat: {calculator.format_currency(results.monthly_revenue)}
-- Zusatzgewinn/Monat: {calculator.format_currency(results.monthly_margin)}
-- ROI (12 Monate): {results.roi_percentage:.0f}%
-- Payback-Zeit: {results.payback_days} Tage
-- Jahresgewinn: {calculator.format_currency(results.annual_margin)}
-
-## Kalkulation im Detail
-- Zusätzliche Deals: {calculator.format_number(results.additional_deals)}/Monat
-- Deal-Wert: {calculator.format_currency(params.deal_value)}
-- Marge: {params.margin_rate}%
-- ROI-Multiple: {results.roi_multiple + 1:.1f}x
-
-## Empfehlung
-{"✅ KLARE EMPFEHLUNG: Training durchführen!" if results.roi_percentage > 100 else "👍 Training lohnt sich" if results.roi_percentage > 50 else "⚠️ ROI zu niedrig"}
-
-## Top-Argumente für Management
-1. ROI von {results.roi_percentage:.0f}% ist außergewöhnlich
-2. Payback in nur {results.payback_days} Tagen
-3. {calculator.format_currency(results.annual_margin)} zusätzlicher Jahresgewinn
-4. Jeder Euro bringt {results.roi_multiple + 1:.1f}€ zurück
-5. Wettbewerbsvorteil durch bessere Sales-Skills
-"""
-        
-        st.download_button(
-            label="📊 PowerPoint Text",
-            data=ppt_content,
-            file_name=f"roi_powerpoint_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-            mime="text/plain"
-        )
 
 if __name__ == "__main__":
     main()
@@ -705,11 +793,12 @@ if __name__ == "__main__":
 with open('app.py', 'w', encoding='utf-8') as f:
     f.write(streamlit_app_content)
 
-print("✅ Streamlit app.py mit detaillierten Kalkulationen wurde erfolgreich aktualisiert!")
-print("🔢 Neue Features:")
-print("   - Live-Kalkulationen in Seitenspalte")
-print("   - Schritt-für-Schritt Berechnungen")
-print("   - Interaktive Kalkulations-Tabelle")
-print("   - Vollständige Berechnungsdetails")
-print("   - Export der Kalkulationen als CSV")
+print("✅ Streamlit app.py wurde erfolgreich aktualisiert!")
+print("🎯 Neue Features:")
+print("   - PDF-Report mit professionellem Layout")
+print("   - PowerPoint-Deck (4 Slides) für Präsentation")
+print("   - EIN aussagekräftiger Chart der die ganze Story erzählt")
+print("   - Worst-Case Szenario für Risiko-Analyse")
+print("   - Kein JSON Export mehr")
+print("   - Fokussierte, überzeugende Darstellung")
 print("🌐 Bereit für Online-Deployment!")
