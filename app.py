@@ -238,4 +238,128 @@ class SalesROICalculator:
         
         # Empfehlung
         print(f"\\n" + "=" * 80)
-        if r.roi_percentage > 100 and r.payback_days
+        if r.roi_percentage > 100 and r.payback_days < 90:
+            print("🎉 KLARE EMPFEHLUNG: TRAINING DURCHFÜHREN!")
+            print("=" * 80)
+            print(f"✅ ROI von {r.roi_percentage:.0f}% ist außergewöhnlich")
+            print(f"✅ Payback in nur {r.payback_days} Tagen")
+            print(f"✅ {self.format_currency(r.monthly_revenue)} Mehrumsatz pro Monat")
+            print(f"✅ {self.format_currency(r.monthly_margin)} zusätzlicher GEWINN pro Monat")
+            print(f"✅ Perfekte Argumentationsbasis für CFO und CEO!")
+        elif r.roi_percentage > 50:
+            print("👍 EMPFEHLUNG: TRAINING LOHNT SICH")
+            print("=" * 80)
+            print(f"✅ ROI von {r.roi_percentage:.0f}% rechtfertigt die Investition")
+            print(f"✅ Payback-Zeit: {r.payback_days} Tage")
+            print(f"✅ Monatlicher Zusatzgewinn: {self.format_currency(r.monthly_margin)}")
+        else:
+            print("⚠️  VORSICHT: ROI ZU NIEDRIG")
+            print("=" * 80)
+            print(f"❌ ROI von nur {r.roi_percentage:.0f}% rechtfertigt möglicherweise nicht die Investition")
+            print(f"❌ Prüfen Sie die Parameter oder suchen Sie Alternativen")
+            print(f"❌ Monatlicher Zusatzgewinn nur: {self.format_currency(r.monthly_margin)}")
+    
+    def run_scenario_analysis(self, scenario: str) -> str:
+        """Führe Szenario-Analyse durch"""
+        if not self.results:
+            return "❌ Bitte zuerst eine Berechnung durchführen!"
+        
+        r = self.results
+        
+        if scenario == 'best':
+            best_revenue = r.monthly_revenue * 1.3
+            best_profit = best_revenue * (self.parameters.margin_rate / 100)
+            best_roi = r.roi_percentage * 1.5
+            return f"""
+🚀 BEST CASE SZENARIO
+{'='*50}
+📋 Annahme: Training wirkt sogar besser als erwartet (+30% zum Ziel)
+
+📊 Zahlen:
+   • Mehrumsatz: {self.format_currency(best_revenue)}/Monat
+   • Zusatzgewinn: {self.format_currency(best_profit)}/Monat  
+   • ROI: ~{best_roi:.0f}%
+   • Payback: ~{int(r.payback_days * 0.7)} Tage
+
+💼 Joey's Argument:
+"Selbst wenn wir konservativ rechnen, ist der ROI fantastisch. 
+Im Best Case haben wir {self.format_currency(best_profit * 12)} zusätzlichen Jahresgewinn!"
+            """
+        
+        elif scenario == 'arguments':
+            return f"""
+💼 TOP-ARGUMENTE FÜR CFO & CEO
+{'='*50}
+1️⃣  GEWINN-FOKUS: 
+   "Training generiert {self.format_currency(r.annual_margin)} zusätzlichen 
+   Jahresgewinn - das ist echtes Geld in der Kasse!"
+
+2️⃣  SCHNELLE AMORTISATION:
+   "Investment zahlt sich in {r.payback_days} Tagen zurück - 
+   schneller als jede Maschine oder Software"
+
+3️⃣  MARGE-HEBEL:
+   "Jeder zusätzliche Deal bringt {self.format_currency(r.monthly_revenue/r.additional_deals * self.parameters.margin_rate/100)} 
+   Gewinn - dauerhaft!"
+
+4️⃣  WETTBEWERBSDRUCK:
+   "Konkurrent nimmt uns täglich {self.format_currency(r.monthly_margin/30)} 
+   Gewinn weg - jeden Monat den wir warten!"
+
+5️⃣  SKALIERUNG:
+   "Diese {self.parameters.margin_rate}% Marge wirkt auf ALLE zukünftigen 
+   Sales - nicht nur auf das Training!"
+            """
+        
+        return "❌ Unbekanntes Szenario"
+
+
+def main():
+    """Hauptprogramm"""
+    calculator = SalesROICalculator()
+    
+    try:
+        # Szenario zeigen
+        calculator.print_scenario()
+        
+        # Parameter sammeln
+        parameters = calculator.get_parameters_input()
+        
+        # Berechnen
+        print("\\n🔄 Berechne ROI...")
+        results = calculator.calculate_roi(parameters)
+        
+        # Ergebnisse zeigen
+        calculator.print_results()
+        
+        # Zusätzliche Analysen
+        print("\\n" + "="*80)
+        print("📊 ZUSÄTZLICHE ANALYSEN")
+        print("="*80)
+        
+        print(calculator.run_scenario_analysis('best'))
+        print(calculator.run_scenario_analysis('arguments'))
+        
+        print("\\n🎯 FAZIT:")
+        print("="*80)
+        print("✅ ROI-Kalkulation abgeschlossen!")
+        print("✅ Alle Argumente für das Management bereit!")
+        print("✅ Joey kann jetzt überzeugen! 🚀")
+        
+    except KeyboardInterrupt:
+        print("\\n\\n👋 Programm beendet. Auf Wiedersehen!")
+    except Exception as e:
+        print(f"\\n❌ Fehler: {e}")
+        print("🔧 Bitte prüfen Sie Ihre Eingaben und versuchen Sie es erneut.")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+# Write to file
+with open('app.py', 'w', encoding='utf-8') as f:
+    f.write(app_py_content)
+
+print("✅ app.py wurde erfolgreich erstellt!")
+print("📁 Datei ist bereit zum Ausführen mit: python app.py")
